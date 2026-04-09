@@ -177,6 +177,7 @@ export async function runEmbeddedPiAgent(
         modelId,
         agentDir,
         params.config,
+        { retryTransientProviderRuntimeMiss: true },
       );
       if (!model) {
         throw new FailoverError(error ?? `Unknown model: ${provider}/${modelId}`, {

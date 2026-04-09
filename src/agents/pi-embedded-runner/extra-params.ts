@@ -293,6 +293,70 @@ function resolveAliasedParamValue(
   return seen ? resolved : undefined;
 }
 
+/**
+ * Create a streamFn wrapper that flattens message content arrays to plain strings.
+ *
+ * Some OpenAI-compatible models (e.g. openai/gpt-oss-120b) only accept
+ * `content: "string"` and reject the array-of-content-blocks format that
+ * pi-ai produces for multi-part UserMessages. This wrapper intercepts the
+ * serialized request payload and collapses any array content to a
+ * newline-joined string of text blocks before the request is sent.
+ *
+ * Enable per-model via: agents.defaults.models["provider/modelId"].params.flattenContent = true
+ */
+function createContentFlattenWrapper(baseStreamFn: StreamFn | undefined): StreamFn {
+  const underlying = baseStreamFn ?? streamSimple;
+  return (model, context, options) =>
+    streamWithPayloadPatch(underlying, model, context, options, (payloadObj) => {
+      const messages = payloadObj.messages;
+      if (Array.isArray(messages)) {
+        for (const msg of messages) {
+          if (
+            msg &&
+            typeof msg === "object" &&
+            Array.isArray((msg as Record<string, unknown>).content)
+          ) {
+            const contentArray = (msg as Record<string, unknown>).content as Array<
+              Record<string, unknown>
+            >;
+            const text = contentArray
+              .filter((block) => block.type === "text" && typeof block.text === "string")
+              .map((block) => block.text as string)
+              .join("\n");
+            (msg as Record<string, unknown>).content = text;
+          }
+        }
+      }
+    });
+}
+
+/**
+ * Qwen 3 models emit role="final" thinking tokens that pi-ai's stream parser
+ * does not recognize, causing "Unknown role: final" errors. Inject
+ * enable_thinking=false to suppress the thinking output entirely.
+ */
+function createQwen3ThinkingDisabledWrapper(baseStreamFn: StreamFn | undefined): StreamFn {
+  const underlying = baseStreamFn ?? streamSimple;
+  return (model, context, options) => {
+    // gpt-oss-120b is also a Qwen3-family model (same thinking token behavior)
+    const isQwen3Family = model.id.startsWith("qwen-3") || model.id.includes("gpt-oss-120b");
+    if (
+      model.api !== "openai-completions" ||
+      typeof model.id !== "string" ||
+      !isQwen3Family ||
+      model.provider === "cerebras" // cerebras rejects enable_thinking as unsupported
+    ) {
+      return underlying(model, context, options);
+    }
+    log.debug(`disabling Qwen 3 thinking for ${model.provider ?? "unknown"}/${model.id}`);
+    return streamWithPayloadPatch(underlying, model, context, options, (payloadObj) => {
+      if (payloadObj.enable_thinking === undefined) {
+        payloadObj.enable_thinking = false;
+      }
+    });
+  };
+}
+
 function createParallelToolCallsWrapper(
   baseStreamFn: StreamFn | undefined,
   enabled: boolean,
@@ -379,6 +443,15 @@ function applyPostPluginStreamWrappers(
   // visible reply path because it does not emit native Anthropic thinking
   // blocks. Disable thinking unless an earlier wrapper already set it.
   ctx.agent.streamFn = createMinimaxThinkingDisabledWrapper(ctx.agent.streamFn);
+
+  // Qwen 3 models emit role="final" thinking tokens that pi-ai cannot parse.
+  // Suppress thinking output unconditionally for all Qwen 3 models.
+  ctx.agent.streamFn = createQwen3ThinkingDisabledWrapper(ctx.agent.streamFn);
+
+  if (ctx.effectiveExtraParams.flattenContent === true) {
+    log.debug(`applying content flatten wrapper for ${ctx.provider}/${ctx.modelId}`);
+    ctx.agent.streamFn = createContentFlattenWrapper(ctx.agent.streamFn);
+  }
 
   const rawParallelToolCalls = resolveAliasedParamValue(
     [ctx.resolvedExtraParams, ctx.override],
