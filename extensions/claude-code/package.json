@@ -1,0 +1,12 @@
+{
+  "name": "@openclaw/claude-code-provider",
+  "version": "2026.4.4",
+  "private": true,
+  "description": "OpenClaw Claude Code CLI provider plugin — routes inference through the host `claude` CLI",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

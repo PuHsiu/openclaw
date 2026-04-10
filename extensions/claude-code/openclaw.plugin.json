@@ -1,0 +1,27 @@
+{
+  "id": "claude-code",
+  "enabledByDefault": true,
+  "providers": ["claude-code"],
+  "cliBackends": ["claude-code"],
+  "modelSupport": {
+    "modelPrefixes": ["claude-code/"]
+  },
+  "providerAuthEnvVars": {},
+  "providerAuthChoices": [
+    {
+      "provider": "claude-code",
+      "method": "cli",
+      "choiceId": "claude-code-cli",
+      "choiceLabel": "Claude Code CLI",
+      "choiceHint": "Use a local Claude Code CLI login on this host (no API key needed)",
+      "groupId": "claude-code",
+      "groupLabel": "Claude Code",
+      "groupHint": "Host Claude Code CLI"
+    }
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
