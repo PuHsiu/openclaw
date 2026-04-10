@@ -284,6 +284,8 @@ importers:
 
   extensions/chutes: {}
 
+  extensions/claude-code: {}
+
   extensions/cloudflare-ai-gateway: {}
 
   extensions/copilot-proxy: {}

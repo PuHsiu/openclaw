@@ -101,7 +101,7 @@ RUN pnpm ui:build
 # Prune dev dependencies and strip build-only metadata before copying
 # runtime assets into the final image.
 FROM build AS runtime-assets
-RUN CI=true pnpm prune --prod && \
+RUN CI=true NODE_OPTIONS=--max-old-space-size=4096 pnpm prune --prod && \
     find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete
 
 # ── Runtime base images ─────────────────────────────────────────
@@ -241,6 +241,21 @@ RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw \
  && chmod 755 /app/openclaw.mjs
 
 ENV NODE_ENV=production
+
+# Install mcporter for Tavily MCP bridge (accessible to node user)
+RUN npm install -g mcporter --prefix /home/node/.local && \
+    chown -R node:node /home/node/.local
+ENV PATH="/home/node/.local/bin:${PATH}"
+
+# Optionally install Claude Code CLI to enable the claude-code inference backend.
+# Build with: docker build --build-arg OPENCLAW_INSTALL_CLAUDE_CLI=1 ...
+# Lets OpenClaw route inference through `claude -p` (requires ANTHROPIC_API_KEY
+# or a ~/.claude credential mount at container run time).
+ARG OPENCLAW_INSTALL_CLAUDE_CLI=""
+RUN if [ -n "$OPENCLAW_INSTALL_CLAUDE_CLI" ]; then \
+      npm install -g @anthropic-ai/claude-code --prefix /home/node/.local && \
+      chown -R node:node /home/node/.local; \
+    fi
 
 # Security hardening: Run as non-root user
 # The node:24-bookworm image includes a 'node' user (uid 1000)
