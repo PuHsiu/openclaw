@@ -1,0 +1,201 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.4.4",
+    "lastTouchedAt": "2026-04-06T12:56:36.669Z"
+  },
+  "models": {
+    "providers": {
+      "cerebras": {
+        "baseUrl": "https://api.cerebras.ai/v1",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "qwen-3-235b-a22b-instruct-2507",
+            "name": "Cerebras Qwen 3 235B",
+            "reasoning": false,
+            "input": ["text"],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 32768,
+            "api": "openai-completions"
+          }
+        ]
+      },
+      "openrouter": {
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "openai/gpt-oss-120b:free",
+            "name": "OpenRouter GPT-OSS 120B (Free)",
+            "reasoning": false,
+            "input": ["text"],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 16384,
+            "api": "openai-completions"
+          }
+        ]
+      },
+      "groq": {
+        "baseUrl": "https://api.groq.com/openai/v1",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "compound-beta",
+            "name": "Groq Compound Beta",
+            "reasoning": false,
+            "input": ["text"],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 8192,
+            "api": "openai-completions"
+          },
+          {
+            "id": "llama-3.3-70b-versatile",
+            "name": "Groq Llama 3.3 70B Versatile",
+            "reasoning": false,
+            "input": ["text"],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 32768,
+            "api": "openai-completions"
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "claude-code/sonnet",
+        "fallbacks": [
+          "openrouter/openai/gpt-oss-120b:free",
+          "cerebras/qwen-3-235b-a22b-instruct-2507",
+          "anthropic/claude-haiku-4-5"
+        ]
+      },
+      "cliBackends": {
+        "claude-code": {
+          "command": "claude"
+        }
+      },
+      "models": {
+        "claude-code/sonnet": {},
+        "openrouter/openai/gpt-oss-120b:free": {
+          "params": {
+            "flattenContent": true
+          }
+        },
+        "cerebras/qwen-3-235b-a22b-instruct-2507": {
+          "params": {
+            "flattenContent": true
+          }
+        }
+      },
+      "userTimezone": "Asia/Taipei",
+      "contextTokens": 65536,
+      "heartbeat": {
+        "to": "102139104"
+      },
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
+      }
+    }
+  },
+  "tools": {
+    "web": {
+      "search": {
+        "provider": "brave"
+      }
+    }
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
+  },
+  "session": {
+    "reset": {
+      "atHour": 16,
+      "idleMinutes": 180
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "pairing",
+      "botToken": "8463562016:AAECU46qs2iRJrDugAbc4f_IVtqf_6ZnyWM",
+      "groupPolicy": "allowlist",
+      "streaming": "partial"
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "auth": {
+      "mode": "token",
+      "token": "38772eee1a51d77cc85fdeb178aa8f705186708dc3040485"
+    },
+    "controlUi": {
+      "dangerouslyAllowHostHeaderOriginFallback": true
+    }
+  },
+  "skills": {
+    "allowBundled": ["mcporter"],
+    "entries": {
+      "mcporter": {
+        "enabled": true
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "telegram": {
+        "enabled": true,
+        "config": {}
+      },
+      "brave": {
+        "enabled": true,
+        "config": {
+          "webSearch": {
+            "apiKey": "BSAfxxKaEn1UFjQYJj3e-X3SscTYE8E"
+          }
+        }
+      },
+      "openrouter": {
+        "enabled": true
+      },
+      "anthropic": {
+        "enabled": true
+      },
+      "claude-code": {
+        "enabled": true
+      }
+    }
+  },
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  }
+}

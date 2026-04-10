@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "tavily": {
+      "baseUrl": "https://mcp.tavily.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer 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"
+      }
+    },
+    "openclaw-assist": {
+      "baseUrl": "http://172.17.0.1:50011/sse",
+      "transport": "sse"
+    }
+  },
+  "imports": []
+}
