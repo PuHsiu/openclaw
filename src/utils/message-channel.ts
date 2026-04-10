@@ -56,9 +56,17 @@ export function isWebchatClient(client?: GatewayClientInfoLike | null): boolean 
   return normalizeGatewayClientName(client?.id) === GATEWAY_CLIENT_NAMES.WEBCHAT_UI;
 }
 
+// Internal heartbeat trigger labels that appear in the Provider field of heartbeat
+// context messages. These are not valid message channels; treat them as unset so
+// that channel-selection falls back to the default configured channel (e.g. telegram).
+const HEARTBEAT_PROVIDER_LABELS = new Set(["heartbeat", "exec-event", "cron-event"]);
+
 export function normalizeMessageChannel(raw?: string | null): string | undefined {
   const normalized = raw?.trim().toLowerCase();
   if (!normalized) {
+    return undefined;
+  }
+  if (HEARTBEAT_PROVIDER_LABELS.has(normalized)) {
     return undefined;
   }
   if (normalized === INTERNAL_MESSAGE_CHANNEL) {
