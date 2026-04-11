@@ -145,7 +145,11 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
       DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends; \
     fi && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      procps hostname curl git lsof openssl
+      procps hostname curl git lsof openssl tzdata && \
+    ln -snf /usr/share/zoneinfo/Asia/Taipei /etc/localtime && \
+    echo "Asia/Taipei" > /etc/timezone
+
+ENV TZ=Asia/Taipei
 
 RUN chown node:node /app
 
@@ -248,10 +252,12 @@ RUN npm install -g mcporter --prefix /home/node/.local && \
 ENV PATH="/home/node/.local/bin:${PATH}"
 
 # Optionally install Claude Code CLI to enable the claude-code inference backend.
-# Build with: docker build --build-arg OPENCLAW_INSTALL_CLAUDE_CLI=1 ...
-# Lets OpenClaw route inference through `claude -p` (requires ANTHROPIC_API_KEY
-# or a ~/.claude credential mount at container run time).
-ARG OPENCLAW_INSTALL_CLAUDE_CLI=""
+# Enabled by default (OPENCLAW_INSTALL_CLAUDE_CLI=1). Set to empty string to skip:
+#   docker build --build-arg OPENCLAW_INSTALL_CLAUDE_CLI= ...
+# Lets OpenClaw route inference through `claude -p`. Authentication priority:
+#   1. ANTHROPIC_API_KEY env var (forwarded from host keychain in spawn.sh)
+#   2. OAuth session in ~/.claude/.credentials.json (mounted volume at runtime)
+ARG OPENCLAW_INSTALL_CLAUDE_CLI="1"
 RUN if [ -n "$OPENCLAW_INSTALL_CLAUDE_CLI" ]; then \
       npm install -g @anthropic-ai/claude-code --prefix /home/node/.local && \
       chown -R node:node /home/node/.local; \

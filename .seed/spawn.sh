@@ -8,15 +8,22 @@
 #
 # API keys are read from macOS Keychain (never stored in this file).
 # Keychain service names used:
-#   Anthropic  — add manually: security add-generic-password -s LLM_API_KEY_ANTHROPIC_SUBARU  -a openclaw -w <key>
-#   Cerebras   — LLM_API_KEY_CEREBRAS_SUBARU   (already in keychain)
-#   OpenRouter — LLM_API_KEY_OPENROUTER_SUBARU  (already in keychain)
+#   Anthropic  — LLM_API_KEY_ANTHROPIC_SUBARU  (used only for non-claude-code fallback models)
+#   Cerebras   — LLM_API_KEY_CEREBRAS_SUBARU
+#   OpenRouter — LLM_API_KEY_OPENROUTER_SUBARU
 #
-# claude-code provider (optional):
-#   The container image must have been built with --build-arg OPENCLAW_INSTALL_CLAUDE_CLI=1.
-#   The Anthropic API key is forwarded as ANTHROPIC_API_KEY so the claude subprocess
-#   can authenticate.  ~/.claude is also mounted read-only so any local OAuth session
-#   (e.g. a Claude Max login) is available inside the container.
+# claude-code OAuth credentials:
+#   Stored persistently on the host at: <suite-dir>/claude-credentials/
+#     .credentials.json   — OAuth token (written by `claude auth login`)
+#     .claude.json        — CLI state (backed up by claude automatically)
+#   Both files survive container rebuilds because the directory is mounted as
+#   a volume at /home/node/.claude inside the container.
+#   The Dockerfile installs the claude CLI by default (OPENCLAW_INSTALL_CLAUDE_CLI=1).
+#   Note: the claude-code provider clears ANTHROPIC_API_KEY before spawning the
+#   subprocess, so the claude CLI always uses its own OAuth token, never the API key.
+#
+#   First-time auth (if .credentials.json is missing):
+#     docker exec -it <container> claude auth login
 
 set -euo pipefail
 
@@ -95,58 +102,75 @@ cp "$SEED_DIR/openclaw.json" "$SUITE_DIR/openclaw.json"
 build_auth_profiles > "$SUITE_DIR/agents/main/agent/auth-profiles.json"
 cp "$SEED_DIR/workspace/config/mcporter.json" "$SUITE_DIR/workspace/config/mcporter.json"
 
+# ---------------------------------------------------------------------------
+# Build / update the openclaw image
+# ---------------------------------------------------------------------------
+
+REPO_ROOT="$(dirname "$SEED_DIR")"
+echo "==> Building openclaw image (with claude-code CLI)…"
+docker build \
+  --build-arg OPENCLAW_INSTALL_CLAUDE_CLI=1 \
+  -t openclaw \
+  "$REPO_ROOT"
+
 echo "==> Stopping & removing old container (if any)"
 docker rm -f "$CONTAINER" 2>/dev/null || true
 
 echo "==> Starting fresh container: $CONTAINER"
 
-# Mount a persistent, writable credentials directory for the claude CLI.
-# On first run: docker exec -it subaru.agent claude auth login
-# Credentials are saved here and survive container restarts.
+# ---------------------------------------------------------------------------
+# Claude OAuth credentials volume
+# ---------------------------------------------------------------------------
+# ~/.claude/ is mounted from this host directory so OAuth tokens survive rebuilds.
+# On first auth: docker exec -it <container> claude auth login
+# The claude CLI writes .credentials.json and .claude.json into this directory.
+#
+# .claude.json lives at ~/.claude.json (HOME root), one level above the mount.
+# We store it inside the volume as ~/.claude/.claude.json and symlink it into
+# place at container startup via the shell wrapper below.
 CLAUDE_CRED_DIR="$SUITE_DIR/claude-credentials"
 mkdir -p "$CLAUDE_CRED_DIR"
-CLAUDE_CRED_MOUNT=(-v "$CLAUDE_CRED_DIR:/home/node/.claude")
 echo "  claude-credentials dir: $CLAUDE_CRED_DIR"
 
-# Forward the Anthropic API key so the claude subprocess can authenticate even
-# without an OAuth session (falls back to direct-API billing via the key).
+# Forward the Anthropic API key for non-claude-code fallback models (anthropic/*).
+# The claude-code provider clears this before spawning the claude subprocess,
+# so it does not affect OAuth-based claude-code inference.
 ANTHROPIC_KEY_ENV=()
 if [ -n "$ANTHROPIC_KEY" ]; then
   ANTHROPIC_KEY_ENV=(-e "ANTHROPIC_API_KEY=$ANTHROPIC_KEY")
-  echo "  ANTHROPIC_API_KEY: forwarded to container"
+  echo "  ANTHROPIC_API_KEY: forwarded (for anthropic/* fallback models)"
 fi
 
-# Optionally pass a pre-obtained Claude Code OAuth token via env.
-# Usage: CLAUDE_CODE_OAUTH_TOKEN=<token> bash spawn.sh
-CLAUDE_OAUTH_ENV=()
-if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-  CLAUDE_OAUTH_ENV=(-e "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN")
-  echo "  CLAUDE_CODE_OAUTH_TOKEN: forwarded to container"
-fi
+# Startup wrapper: symlink ~/.claude.json → ~/.claude/.claude.json so the
+# claude CLI finds its state file even though HOME root is not a volume.
+# The ln is idempotent; errors are suppressed so a stale link does not abort.
+GATEWAY_CMD='ln -sf /home/node/.claude/.claude.json /home/node/.claude.json 2>/dev/null || true; exec node openclaw.mjs gateway --allow-unconfigured --bind lan'
 
 docker run -d \
   --name "$CONTAINER" \
   --restart unless-stopped \
   -p 18789:18789 \
   -p 50001:18789 \
+  -e TZ=Asia/Taipei \
   -v "$SUITE_DIR:/home/node/.openclaw" \
   -v "$HOME/Realms/first.abode:/realms/first.abode" \
   -v "$HOME/Realms/forge:/realms/forge" \
-  "${CLAUDE_CRED_MOUNT[@]}" \
+  -v "$CLAUDE_CRED_DIR:/home/node/.claude" \
   "${ANTHROPIC_KEY_ENV[@]}" \
-  "${CLAUDE_OAUTH_ENV[@]+"${CLAUDE_OAUTH_ENV[@]}"}" \
   openclaw \
-  node openclaw.mjs gateway --allow-unconfigured --bind lan
+  sh -c "$GATEWAY_CMD"
 
 echo "==> Done. Gateway starting on port 18789 / 50001"
 echo "    Container: $CONTAINER"
 echo "    Suite dir: $SUITE_DIR"
 echo "    Remember to approve Telegram pairing in the bot after first DM."
 echo ""
-echo "    claude-code provider:"
+echo "    claude-code OAuth:"
 if [ ! -f "$CLAUDE_CRED_DIR/.credentials.json" ]; then
-  echo "    ⚠  Not yet authenticated. Run once to enable claude-code inference:"
+  echo "    ⚠  Not yet authenticated. Run once:"
   echo "       docker exec -it $CONTAINER claude auth login"
+  echo "    Token will be saved to: $CLAUDE_CRED_DIR/.credentials.json"
 else
-  echo "    ✓ Credentials found at $CLAUDE_CRED_DIR/.credentials.json"
+  echo "    ✓ OAuth token: $CLAUDE_CRED_DIR/.credentials.json"
+  echo "    ✓ CLI state:   $CLAUDE_CRED_DIR/.claude.json"
 fi

@@ -116,6 +116,7 @@
       "userTimezone": "Asia/Taipei",
       "contextTokens": 65536,
       "heartbeat": {
+        "target": "telegram",
         "to": "102139104"
       },
       "maxConcurrent": 4,
