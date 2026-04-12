@@ -294,6 +294,7 @@ export async function runAgentTurnWithFallback(params: {
   pendingToolTasks: Set<Promise<void>>;
   resetSessionAfterCompactionFailure: (reason: string) => Promise<boolean>;
   resetSessionAfterRoleOrderingConflict: (reason: string) => Promise<boolean>;
+  resetCliSessionAfterOverflow: (provider: string) => Promise<boolean>;
   isHeartbeat: boolean;
   sessionKey?: string;
   getActiveSessionEntry: () => SessionEntry | undefined;
@@ -339,6 +340,7 @@ export async function runAgentTurnWithFallback(params: {
   let fallbackModel = params.followupRun.run.model;
   let fallbackAttempts: RuntimeFallbackAttempt[] = [];
   let didResetAfterCompactionFailure = false;
+  let didResetCliSessionAfterOverflow = false;
   let didRetryTransientHttpError = false;
   let liveModelSwitchRetries = 0;
   let bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
@@ -1006,6 +1008,20 @@ export async function runAgentTurnWithFallback(params: {
         await new Promise<void>((resolve) => {
           setTimeout(resolve, TRANSIENT_HTTP_RETRY_DELAY_MS);
         });
+        continue;
+      }
+
+      // CLI backend context overflow recovery: clear the accumulated CLI session so
+      // the next attempt starts a fresh session with the full system prompt re-injected.
+      // Only attempt once to prevent an infinite retry loop if the message itself is
+      // oversized (e.g. a single enormous user message that will always overflow).
+      if (
+        isContextOverflow &&
+        !didResetCliSessionAfterOverflow &&
+        isCliProvider(fallbackProvider, params.followupRun.run.config) &&
+        (await params.resetCliSessionAfterOverflow(fallbackProvider))
+      ) {
+        didResetCliSessionAfterOverflow = true;
         continue;
       }
 

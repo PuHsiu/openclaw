@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { clearCliSession } from "../../agents/cli-session.js";
 import { lookupContextTokens } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 import { resolveModelAuthMode } from "../../agents/model-auth.js";
@@ -386,6 +387,34 @@ export async function runReplyAgent(params: {
     }
     return true;
   };
+  const resetCliSessionAfterOverflow = async (provider: string): Promise<boolean> => {
+    if (!sessionKey || !activeSessionStore || !storePath) {
+      return false;
+    }
+    const entry = activeSessionStore[sessionKey] ?? activeSessionEntry;
+    if (!entry) {
+      return false;
+    }
+    // Clear in-memory binding immediately so the next runCliAgent call starts a fresh session.
+    clearCliSession(entry, provider);
+    activeSessionStore[sessionKey] = entry;
+    try {
+      await updateSessionStore(storePath, (store) => {
+        const persisted = store[sessionKey];
+        if (persisted) {
+          clearCliSession(persisted, provider);
+        }
+      });
+    } catch (err) {
+      defaultRuntime.error(
+        `Failed to persist CLI session clear after overflow (${sessionKey}): ${String(err)}`,
+      );
+    }
+    defaultRuntime.error(
+      `CLI context overflow (provider=${provider}, session=${sessionKey}). Cleared session binding — retrying with fresh session.`,
+    );
+    return true;
+  };
   const resetSessionAfterCompactionFailure = async (reason: string): Promise<boolean> =>
     resetSession({
       failureLabel: "compaction failure",
@@ -417,6 +446,7 @@ export async function runReplyAgent(params: {
       pendingToolTasks,
       resetSessionAfterCompactionFailure,
       resetSessionAfterRoleOrderingConflict,
+      resetCliSessionAfterOverflow,
       isHeartbeat,
       sessionKey,
       getActiveSessionEntry: () => activeSessionEntry,
