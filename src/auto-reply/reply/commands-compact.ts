@@ -1,3 +1,6 @@
+import { generateCliCompactionSummary } from "../../agents/cli-compaction.js";
+import { clearCliSession, setCliCompactionSummary } from "../../agents/cli-session.js";
+import { isCliProvider } from "../../agents/model-selection.js";
 import {
   abortEmbeddedPiRun,
   compactEmbeddedPiSession,
@@ -9,6 +12,7 @@ import {
   resolveFreshSessionTotalTokens,
   resolveSessionFilePath,
   resolveSessionFilePathOptions,
+  updateSessionStore,
 } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
@@ -107,6 +111,56 @@ export const handleCompactCommand: CommandHandler = async (params) => {
     agentId: params.agentId,
     isGroup: params.isGroup,
   });
+
+  // For CLI-backed providers (e.g. claude-code/sonnet), use the CLI compaction path
+  // so we avoid the embedded-session HTTP API call that can 429 under rate limits.
+  if (isCliProvider(params.provider, params.cfg)) {
+    const sessionFile = resolveSessionFilePath(
+      sessionId,
+      params.sessionEntry,
+      resolveSessionFilePathOptions({
+        agentId: params.agentId,
+        storePath: params.storePath,
+      }),
+    );
+    const summary = await generateCliCompactionSummary({
+      sessionFile,
+      provider: params.provider,
+      config: params.cfg,
+    }).catch(() => null);
+    if (params.sessionEntry) {
+      if (summary) {
+        setCliCompactionSummary(params.sessionEntry, params.provider, summary);
+      }
+      clearCliSession(params.sessionEntry, params.provider);
+      if (params.sessionStore && params.sessionKey) {
+        params.sessionStore[params.sessionKey] = params.sessionEntry;
+      }
+    }
+    if (params.storePath && params.sessionKey) {
+      await updateSessionStore(params.storePath, (store) => {
+        const persisted = store[params.sessionKey];
+        if (persisted) {
+          if (summary) {
+            setCliCompactionSummary(persisted, params.provider, summary);
+          }
+          clearCliSession(persisted, params.provider);
+        }
+      }).catch(() => {
+        /* best-effort */
+      });
+    }
+    const contextSummary = formatContextUsageShort(
+      null,
+      params.contextTokens ?? params.sessionEntry?.contextTokens ?? null,
+    );
+    const line = summary
+      ? `Compacted • ${contextSummary}`
+      : `Compaction skipped: no conversation to summarize • ${contextSummary}`;
+    enqueueSystemEvent(line, { sessionKey: params.sessionKey });
+    return { shouldContinue: false, reply: { text: `⚙️ ${line}` } };
+  }
+
   const result = await compactEmbeddedPiSession({
     sessionId,
     sessionKey: params.sessionKey,
