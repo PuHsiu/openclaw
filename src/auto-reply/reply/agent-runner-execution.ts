@@ -6,7 +6,7 @@ import {
 } from "openclaw/plugin-sdk/reply-payload";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import { runCliAgent } from "../../agents/cli-runner.js";
-import { getCliSessionBinding } from "../../agents/cli-session.js";
+import { getCliCompactionSummary, getCliSessionBinding } from "../../agents/cli-session.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import { runWithModelFallback, isFallbackSummaryError } from "../../agents/model-fallback.js";
 import { isCliProvider } from "../../agents/model-selection.js";
@@ -295,6 +295,8 @@ export async function runAgentTurnWithFallback(params: {
   resetSessionAfterCompactionFailure: (reason: string) => Promise<boolean>;
   resetSessionAfterRoleOrderingConflict: (reason: string) => Promise<boolean>;
   resetCliSessionAfterOverflow: (provider: string) => Promise<boolean>;
+  proactiveCliCompaction: (provider: string) => Promise<boolean>;
+  clearStoredCliCompactionSummary: (provider: string) => Promise<void>;
   isHeartbeat: boolean;
   sessionKey?: string;
   getActiveSessionEntry: () => SessionEntry | undefined;
@@ -524,10 +526,32 @@ export async function runAgentTurnWithFallback(params: {
                 startedAt,
               },
             });
-            const cliSessionBinding = getCliSessionBinding(
-              params.getActiveSessionEntry(),
-              provider,
-            );
+            let cliSessionBinding = getCliSessionBinding(params.getActiveSessionEntry(), provider);
+            // Proactive compaction: if an existing session is approaching the context limit,
+            // generate a summary and start a fresh session before the overflow happens.
+            if (cliSessionBinding?.sessionId) {
+              const compacted = await params.proactiveCliCompaction(provider);
+              if (compacted) {
+                // Session binding was cleared by compaction; re-read the (now-absent) binding.
+                cliSessionBinding = getCliSessionBinding(params.getActiveSessionEntry(), provider);
+              }
+            }
+            // Inject stored compaction summary when starting a fresh session.
+            let effectiveExtraSystemPrompt = params.followupRun.run.extraSystemPrompt;
+            if (!cliSessionBinding?.sessionId) {
+              const storedSummary = getCliCompactionSummary(
+                params.getActiveSessionEntry(),
+                provider,
+              );
+              if (storedSummary) {
+                const summaryBlock = `<compaction_summary>\n${storedSummary}\n</compaction_summary>`;
+                effectiveExtraSystemPrompt = effectiveExtraSystemPrompt
+                  ? `${summaryBlock}\n\n${effectiveExtraSystemPrompt}`
+                  : summaryBlock;
+                // Clear so the summary is only injected once.
+                await params.clearStoredCliCompactionSummary(provider);
+              }
+            }
             const authProfileId =
               provider === params.followupRun.run.provider
                 ? params.followupRun.run.authProfileId
@@ -548,7 +572,7 @@ export async function runAgentTurnWithFallback(params: {
                   thinkLevel: params.followupRun.run.thinkLevel,
                   timeoutMs: params.followupRun.run.timeoutMs,
                   runId,
-                  extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+                  extraSystemPrompt: effectiveExtraSystemPrompt,
                   ownerNumbers: params.followupRun.run.ownerNumbers,
                   cliSessionId: cliSessionBinding?.sessionId,
                   cliSessionBinding,

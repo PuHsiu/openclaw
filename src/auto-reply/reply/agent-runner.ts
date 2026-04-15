@@ -1,5 +1,13 @@
 import fs from "node:fs";
-import { clearCliSession } from "../../agents/cli-session.js";
+import {
+  generateCliCompactionSummary,
+  shouldTriggerCliProactiveCompaction,
+} from "../../agents/cli-compaction.js";
+import {
+  clearCliCompactionSummary,
+  clearCliSession,
+  setCliCompactionSummary,
+} from "../../agents/cli-session.js";
 import { lookupContextTokens } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 import { resolveModelAuthMode } from "../../agents/model-auth.js";
@@ -395,13 +403,27 @@ export async function runReplyAgent(params: {
     if (!entry) {
       return false;
     }
-    // Clear in-memory binding immediately so the next runCliAgent call starts a fresh session.
+    // Generate a compaction summary from the current session transcript BEFORE clearing the
+    // session so context is preserved for the fresh session that will follow.
+    const sessionFile = followupRun.run.sessionFile;
+    const summary = await generateCliCompactionSummary({
+      sessionFile,
+      provider,
+      config: cfg,
+    }).catch(() => null);
+    if (summary) {
+      setCliCompactionSummary(entry, provider, summary);
+    }
+    // Clear in-memory binding so the next runCliAgent call starts a fresh session.
     clearCliSession(entry, provider);
     activeSessionStore[sessionKey] = entry;
     try {
       await updateSessionStore(storePath, (store) => {
         const persisted = store[sessionKey];
         if (persisted) {
+          if (summary) {
+            setCliCompactionSummary(persisted, provider, summary);
+          }
           clearCliSession(persisted, provider);
         }
       });
@@ -411,9 +433,74 @@ export async function runReplyAgent(params: {
       );
     }
     defaultRuntime.error(
-      `CLI context overflow (provider=${provider}, session=${sessionKey}). Cleared session binding — retrying with fresh session.`,
+      `CLI context overflow (provider=${provider}, session=${sessionKey}). ${summary ? "Generated compaction summary. " : ""}Cleared session binding — retrying with fresh session.`,
     );
     return true;
+  };
+  const proactiveCliCompaction = async (provider: string): Promise<boolean> => {
+    if (!sessionKey || !activeSessionStore || !storePath) {
+      return false;
+    }
+    const entry = activeSessionStore[sessionKey] ?? activeSessionEntry;
+    if (!entry) {
+      return false;
+    }
+    const sessionFile = followupRun.run.sessionFile;
+    const contextTokens = agentCfgContextTokens ?? 0;
+    const triggered = await shouldTriggerCliProactiveCompaction({ sessionFile, contextTokens });
+    if (!triggered) {
+      return false;
+    }
+    const summary = await generateCliCompactionSummary({
+      sessionFile,
+      provider,
+      config: cfg,
+    }).catch(() => null);
+    if (summary) {
+      setCliCompactionSummary(entry, provider, summary);
+    }
+    clearCliSession(entry, provider);
+    activeSessionStore[sessionKey] = entry;
+    try {
+      await updateSessionStore(storePath, (store) => {
+        const persisted = store[sessionKey];
+        if (persisted) {
+          if (summary) {
+            setCliCompactionSummary(persisted, provider, summary);
+          }
+          clearCliSession(persisted, provider);
+        }
+      });
+    } catch (err) {
+      defaultRuntime.error(
+        `Failed to persist proactive CLI compaction (${sessionKey}): ${String(err)}`,
+      );
+    }
+    defaultRuntime.log(
+      `Proactive CLI compaction triggered (provider=${provider}, session=${sessionKey}). ${summary ? "Generated compaction summary." : "No summary generated."}`,
+    );
+    return true;
+  };
+  const clearStoredCliCompactionSummary = async (provider: string): Promise<void> => {
+    if (!sessionKey || !activeSessionStore || !storePath) {
+      return;
+    }
+    const entry = activeSessionStore[sessionKey] ?? activeSessionEntry;
+    if (!entry) {
+      return;
+    }
+    clearCliCompactionSummary(entry, provider);
+    activeSessionStore[sessionKey] = entry;
+    try {
+      await updateSessionStore(storePath, (store) => {
+        const persisted = store[sessionKey];
+        if (persisted) {
+          clearCliCompactionSummary(persisted, provider);
+        }
+      });
+    } catch {
+      // Non-fatal: summary will just be re-injected on the next turn.
+    }
   };
   const resetSessionAfterCompactionFailure = async (reason: string): Promise<boolean> =>
     resetSession({
@@ -447,6 +534,8 @@ export async function runReplyAgent(params: {
       resetSessionAfterCompactionFailure,
       resetSessionAfterRoleOrderingConflict,
       resetCliSessionAfterOverflow,
+      proactiveCliCompaction,
+      clearStoredCliCompactionSummary,
       isHeartbeat,
       sessionKey,
       getActiveSessionEntry: () => activeSessionEntry,

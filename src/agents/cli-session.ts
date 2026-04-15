@@ -111,6 +111,35 @@ export function clearAllCliSessions(entry: SessionEntry): void {
   delete entry.cliSessionBindings;
   delete entry.cliSessionIds;
   delete entry.claudeCliSessionId;
+  delete entry.cliCompactionSummaries;
+}
+
+export function getCliCompactionSummary(
+  entry: SessionEntry | undefined,
+  provider: string,
+): string | undefined {
+  if (!entry) {
+    return undefined;
+  }
+  return entry.cliCompactionSummaries?.[normalizeProviderId(provider)];
+}
+
+export function setCliCompactionSummary(
+  entry: SessionEntry,
+  provider: string,
+  summary: string,
+): void {
+  const normalized = normalizeProviderId(provider);
+  entry.cliCompactionSummaries = { ...entry.cliCompactionSummaries, [normalized]: summary };
+}
+
+export function clearCliCompactionSummary(entry: SessionEntry, provider: string): void {
+  const normalized = normalizeProviderId(provider);
+  if (entry.cliCompactionSummaries?.[normalized] !== undefined) {
+    const next = { ...entry.cliCompactionSummaries };
+    delete next[normalized];
+    entry.cliCompactionSummaries = Object.keys(next).length > 0 ? next : undefined;
+  }
 }
 
 export function resolveCliSessionReuse(params: {

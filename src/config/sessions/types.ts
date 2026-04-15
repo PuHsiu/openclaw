@@ -184,6 +184,7 @@ export type SessionEntry = {
   memoryFlushContextHash?: string;
   cliSessionIds?: Record<string, string>;
   cliSessionBindings?: Record<string, CliSessionBinding>;
+  cliCompactionSummaries?: Record<string, string>;
   claudeCliSessionId?: string;
   label?: string;
   displayName?: string;
