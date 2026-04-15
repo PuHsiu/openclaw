@@ -11,8 +11,9 @@ import {
   resolveAgentDir,
   resolveAgentEffectiveModelPrimary,
 } from "../agents/agent-scope.js";
+import { runCliAgent } from "../agents/cli-runner.js";
 import { DEFAULT_PROVIDER, DEFAULT_MODEL } from "../agents/defaults.js";
-import { parseModelRef } from "../agents/model-selection.js";
+import { isCliProvider, parseModelRef } from "../agents/model-selection.js";
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -50,36 +51,56 @@ Reply with ONLY the slug, nothing else. Examples: "vendor-pitch", "api-design", 
     const provider = parsed?.provider ?? DEFAULT_PROVIDER;
     const model = parsed?.model ?? DEFAULT_MODEL;
 
-    const result = await runEmbeddedPiAgent({
-      sessionId: `slug-generator-${Date.now()}`,
-      sessionKey: "temp:slug-generator",
-      agentId,
-      sessionFile: tempSessionFile,
-      workspaceDir,
-      agentDir,
-      config: params.cfg,
-      prompt,
-      provider,
-      model,
-      timeoutMs: 15_000, // 15 second timeout
-      runId: `slug-gen-${Date.now()}`,
-    });
+    const runId = `slug-gen-${Date.now()}`;
+    let resultText: string | undefined;
 
-    // Extract text from payloads
-    if (result.payloads && result.payloads.length > 0) {
-      const text = result.payloads[0]?.text;
-      if (text) {
-        // Clean up the response - extract just the slug
-        const slug = text
-          .trim()
-          .toLowerCase()
-          .replace(/[^a-z0-9-]/g, "-")
-          .replace(/-+/g, "-")
-          .replace(/^-|-$/g, "")
-          .slice(0, 30); // Max 30 chars
+    if (isCliProvider(provider, params.cfg)) {
+      // CLI backends (e.g. claude-code) must go through runCliAgent, not the embedded
+      // HTTP runner — the embedded runner would attempt an HTTP API call and fail with
+      // a 401 because CLI providers use OAuth, not an ANTHROPIC_API_KEY.
+      const result = await runCliAgent({
+        sessionId: `slug-generator-${Date.now()}`,
+        sessionKey: "temp:slug-generator",
+        agentId,
+        sessionFile: tempSessionFile,
+        workspaceDir,
+        config: params.cfg,
+        prompt,
+        provider,
+        model,
+        timeoutMs: 15_000,
+        runId,
+      });
+      resultText = result.payloads?.[0]?.text;
+    } else {
+      const result = await runEmbeddedPiAgent({
+        sessionId: `slug-generator-${Date.now()}`,
+        sessionKey: "temp:slug-generator",
+        agentId,
+        sessionFile: tempSessionFile,
+        workspaceDir,
+        agentDir,
+        config: params.cfg,
+        prompt,
+        provider,
+        model,
+        timeoutMs: 15_000,
+        runId,
+      });
+      resultText = result.payloads?.[0]?.text;
+    }
 
-        return slug || null;
-      }
+    if (resultText) {
+      // Clean up the response - extract just the slug
+      const slug = resultText
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 30); // Max 30 chars
+
+      return slug || null;
     }
 
     return null;
