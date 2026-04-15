@@ -254,13 +254,19 @@ ENV PATH="/home/node/.local/bin:${PATH}"
 # Optionally install Claude Code CLI to enable the claude-code inference backend.
 # Enabled by default (OPENCLAW_INSTALL_CLAUDE_CLI=1). Set to empty string to skip:
 #   docker build --build-arg OPENCLAW_INSTALL_CLAUDE_CLI= ...
-# Lets OpenClaw route inference through `claude -p`. Authentication priority:
-#   1. ANTHROPIC_API_KEY env var (forwarded from host keychain in spawn.sh)
-#   2. OAuth session in ~/.claude/.credentials.json (mounted volume at runtime)
+# Installs via the official native installer (https://claude.ai/install.sh) which
+# replaced the deprecated npm package. HOME is set to /home/node so the binary
+# lands in /home/node/.local/bin (already on PATH via the mcporter ENV above).
+# Authentication: the claude-code extension clears ANTHROPIC_API_KEY before
+# spawning the subprocess, so OAuth credentials from ~/.claude/.credentials.json
+# take priority. ANTHROPIC_API_KEY is only used by anthropic/* fallback models.
 ARG OPENCLAW_INSTALL_CLAUDE_CLI="1"
 RUN if [ -n "$OPENCLAW_INSTALL_CLAUDE_CLI" ]; then \
-      npm install -g @anthropic-ai/claude-code --prefix /home/node/.local && \
-      chown -R node:node /home/node/.local; \
+      export HOME=/home/node && \
+      curl -fsSL https://claude.ai/install.sh | bash && \
+      chown -R node:node /home/node/.local && \
+      chown -R node:node /home/node/.cache 2>/dev/null || true && \
+      chown -R node:node /home/node/.npm 2>/dev/null || true; \
     fi
 
 # Security hardening: Run as non-root user
