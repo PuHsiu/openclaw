@@ -120,6 +120,9 @@ const ERROR_PATTERNS = {
     "insufficient balance",
     "insufficient usd or diem balance",
     /requires?\s+more\s+credits/i,
+    // Anthropic usage-policy notification: "Third-party apps now draw from your extra usage"
+    // Returns HTTP 400 (not 402) but is billing-related, not a request/context error.
+    "third-party apps now draw",
   ],
   authPermanent: HIGH_CONFIDENCE_AUTH_PERMANENT_PATTERNS,
   auth: [...AMBIGUOUS_AUTH_ERROR_PATTERNS, ...COMMON_AUTH_ERROR_PATTERNS],

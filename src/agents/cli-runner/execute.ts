@@ -278,7 +278,33 @@ export async function executePreparedCliRun(
             status: resolveFailoverStatus("timeout"),
           });
         }
-        const err = stderr || stdout || "CLI failed.";
+        const rawErr = stderr || stdout || "CLI failed.";
+        // For JSONL output, extract the actual error text from the parsed result
+        // rather than using raw stdout. Raw JSONL can contain usage fields like
+        // "input_tokens" alongside billing error text containing "limit", causing
+        // false-positive context-overflow classification (input.*token.*limit match).
+        const err = (() => {
+          if (!stdout || stderr) {
+            return rawErr;
+          }
+          const effectiveOutputMode = useResume
+            ? (backend.resumeOutput ?? backend.output)
+            : backend.output;
+          if (effectiveOutputMode !== "jsonl") {
+            return rawErr;
+          }
+          try {
+            const parsed = parseCliOutput({
+              raw: stdout,
+              backend,
+              providerId: context.backendResolved.id,
+              outputMode: "jsonl",
+            });
+            return parsed?.text?.trim() || rawErr;
+          } catch {
+            return rawErr;
+          }
+        })();
         const reason = classifyFailoverReason(err, { provider: params.provider }) ?? "unknown";
         const status = resolveFailoverStatus(reason);
         throw new FailoverError(err, {
