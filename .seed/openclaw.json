@@ -97,7 +97,8 @@
       },
       "cliBackends": {
         "claude-code": {
-          "command": "claude"
+          "command": "claude",
+          "clearEnv": ["ANTHROPIC_API_KEY"]
         }
       },
       "models": {

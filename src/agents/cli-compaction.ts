@@ -105,6 +105,11 @@ export async function generateCliCompactionSummary(params: {
       baseEnv: process.env,
       blockPathOverrides: true,
     });
+    // Honour backend.clearEnv so CLI providers that use OAuth (e.g. claude-code)
+    // are not shadowed by an ANTHROPIC_API_KEY present in the host environment.
+    for (const key of backend.config.clearEnv ?? []) {
+      delete env[key];
+    }
 
     let child: ReturnType<typeof spawn>;
     try {
