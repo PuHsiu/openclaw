@@ -142,6 +142,11 @@ const BILLING_ERROR_HARD_402_RE =
   /["']?(?:status|code)["']?\s*[:=]\s*402\b|\bhttp\s*402\b|\berror(?:\s+code)?\s*[:=]?\s*402\b|^\s*402\s+payment/i;
 const BILLING_ERROR_MAX_LENGTH = 512;
 
+// High-confidence billing patterns safe to scan in any-length text (e.g. raw JSONL stdout).
+// These are included in ERROR_PATTERNS.billing but must also be checked when the message
+// exceeds BILLING_ERROR_MAX_LENGTH so they are not skipped by the length guard.
+const BILLING_ERROR_ALWAYS_CHECK_PATTERNS: readonly ErrorPattern[] = ["third-party apps now draw"];
+
 function matchesErrorPatterns(raw: string, patterns: readonly ErrorPattern[]): boolean {
   if (!raw) {
     return false;
@@ -182,7 +187,13 @@ export function isBillingErrorMessage(raw: string): boolean {
   }
 
   if (raw.length > BILLING_ERROR_MAX_LENGTH) {
-    return BILLING_ERROR_HARD_402_RE.test(value);
+    // For long messages (e.g. raw JSONL stdout) check HTTP 402 and the small set of
+    // always-safe patterns. The full ERROR_PATTERNS.billing scan is skipped to avoid
+    // false positives from incidental keyword co-occurrence in large blobs of text.
+    return (
+      BILLING_ERROR_HARD_402_RE.test(value) ||
+      matchesErrorPatterns(value, BILLING_ERROR_ALWAYS_CHECK_PATTERNS)
+    );
   }
   if (matchesErrorPatterns(value, ERROR_PATTERNS.billing)) {
     return true;

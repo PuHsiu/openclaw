@@ -300,7 +300,42 @@ export async function executePreparedCliRun(
               providerId: context.backendResolved.id,
               outputMode: "jsonl",
             });
-            return parsed?.text?.trim() || rawErr;
+            if (parsed?.text?.trim()) {
+              return parsed.text.trim();
+            }
+            // parseCliOutput only matches {"type":"result",...} lines. When the CLI
+            // returns an error as {"type":"assistant","error":"unknown",...}, there is
+            // no result line and parsed is null. Scan for error text in assistant lines
+            // so the message is short and classifiable rather than the full JSONL blob.
+            for (const line of stdout.split(/\r?\n/)) {
+              if (!line.trim()) {
+                continue;
+              }
+              try {
+                const entry = JSON.parse(line) as {
+                  type?: string;
+                  error?: string;
+                  message?: { content?: Array<{ type?: string; text?: string }> };
+                };
+                if (
+                  entry.type === "assistant" &&
+                  entry.error &&
+                  Array.isArray(entry.message?.content)
+                ) {
+                  const text = entry.message.content
+                    .filter((b) => b?.type === "text" && typeof b.text === "string")
+                    .map((b) => b.text as string)
+                    .join("\n")
+                    .trim();
+                  if (text) {
+                    return text;
+                  }
+                }
+              } catch {
+                // Skip malformed lines.
+              }
+            }
+            return rawErr;
           } catch {
             return rawErr;
           }
