@@ -115,7 +115,7 @@
         }
       },
       "userTimezone": "Asia/Taipei",
-      "contextTokens": 65536,
+      "contextTokens": 131072,
       "heartbeat": {
         "target": "telegram",
         "to": "102139104"
