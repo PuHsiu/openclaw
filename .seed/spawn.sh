@@ -107,9 +107,16 @@ cp "$SEED_DIR/workspace/config/mcporter.json" "$SUITE_DIR/workspace/config/mcpor
 # ---------------------------------------------------------------------------
 
 REPO_ROOT="$(dirname "$SEED_DIR")"
+
+# Pass CLAUDE_CLI_VERSION from the environment to force a fresh Claude CLI
+# download without invalidating the OpenClaw build cache. Example:
+#   CLAUDE_CLI_VERSION=$(date +%Y-%m) bash spawn.sh
+CLAUDE_CLI_VERSION="${CLAUDE_CLI_VERSION:-}"
+
 echo "==> Building openclaw image (with claude-code CLI)…"
 docker build \
   --build-arg OPENCLAW_INSTALL_CLAUDE_CLI=1 \
+  ${CLAUDE_CLI_VERSION:+--build-arg CLAUDE_CLI_VERSION="$CLAUDE_CLI_VERSION"} \
   -t openclaw \
   "$REPO_ROOT"
 

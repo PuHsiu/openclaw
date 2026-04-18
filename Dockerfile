@@ -12,6 +12,12 @@
 # Two runtime variants:
 #   Default (bookworm):      docker build .
 #   Slim (bookworm-slim):    docker build --build-arg OPENCLAW_VARIANT=slim .
+#
+# Separate build caches:
+#   OpenClaw and Claude CLI are built in independent stages so changing one
+#   does not invalidate the other's cache layer. To force a fresh Claude CLI
+#   download without rebuilding OpenClaw, bump CLAUDE_CLI_VERSION:
+#     docker build --build-arg CLAUDE_CLI_VERSION=$(date +%Y-%m) .
 ARG OPENCLAW_EXTENSIONS=""
 ARG OPENCLAW_VARIANT=default
 ARG OPENCLAW_BUNDLED_PLUGIN_DIR=extensions
@@ -20,6 +26,8 @@ ARG OPENCLAW_NODE_BOOKWORM_IMAGE="node:24-bookworm@sha256:3a09aa6354567619221ef6
 ARG OPENCLAW_NODE_BOOKWORM_DIGEST="sha256:3a09aa6354567619221ef6c45a5051b671f953f0a1924d1f819ffb236e520e6b"
 ARG OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE="node:24-bookworm-slim@sha256:e8e2e91b1378f83c5b2dd15f0247f34110e2fe895f6ca7719dbb780f929368eb"
 ARG OPENCLAW_NODE_BOOKWORM_SLIM_DIGEST="sha256:e8e2e91b1378f83c5b2dd15f0247f34110e2fe895f6ca7719dbb780f929368eb"
+ARG OPENCLAW_INSTALL_CLAUDE_CLI="1"
+ARG CLAUDE_CLI_VERSION=""
 
 # Base images are pinned to SHA256 digests for reproducible builds.
 # Trade-off: digests must be updated manually when upstream tags move.
@@ -38,6 +46,35 @@ RUN mkdir -p /out && \
         cp "/tmp/${OPENCLAW_BUNDLED_PLUGIN_DIR}/$ext/package.json" "/out/$ext/package.json"; \
       fi; \
     done
+
+# ── Stage: ai-tools ─────────────────────────────────────────────
+# Installs Claude Code CLI and mcporter independently of the OpenClaw build.
+# Cache is only invalidated when CLAUDE_CLI_VERSION or the base image changes,
+# not when OpenClaw source code changes. BuildKit runs this stage in parallel
+# with the OpenClaw build stage.
+FROM ${OPENCLAW_NODE_BOOKWORM_IMAGE} AS ai-tools
+ARG OPENCLAW_INSTALL_CLAUDE_CLI
+ARG CLAUDE_CLI_VERSION
+RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl
+RUN npm install -g mcporter --prefix /home/node/.local && \
+    chown -R node:node /home/node/.local
+RUN if [ -n "$OPENCLAW_INSTALL_CLAUDE_CLI" ]; then \
+      echo "Installing Claude CLI (cache key: ${CLAUDE_CLI_VERSION:-latest})" && \
+      export HOME=/home/node && \
+      for attempt in 1 2 3; do \
+        if curl -fsSL https://claude.ai/install.sh | bash; then \
+          break; \
+        fi; \
+        [ "$attempt" -eq 3 ] && exit 1; \
+        sleep $((attempt * 3)); \
+      done && \
+      chown -R node:node /home/node/.local && \
+      chown -R node:node /home/node/.cache 2>/dev/null || true && \
+      chown -R node:node /home/node/.npm 2>/dev/null || true; \
+    fi
 
 # ── Stage 2: Build ──────────────────────────────────────────────
 FROM ${OPENCLAW_NODE_BOOKWORM_IMAGE} AS build
@@ -246,28 +283,14 @@ RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw \
 
 ENV NODE_ENV=production
 
-# Install mcporter for Tavily MCP bridge (accessible to node user)
-RUN npm install -g mcporter --prefix /home/node/.local && \
-    chown -R node:node /home/node/.local
-ENV PATH="/home/node/.local/bin:${PATH}"
-
-# Optionally install Claude Code CLI to enable the claude-code inference backend.
-# Enabled by default (OPENCLAW_INSTALL_CLAUDE_CLI=1). Set to empty string to skip:
-#   docker build --build-arg OPENCLAW_INSTALL_CLAUDE_CLI= ...
-# Installs via the official native installer (https://claude.ai/install.sh) which
-# replaced the deprecated npm package. HOME is set to /home/node so the binary
-# lands in /home/node/.local/bin (already on PATH via the mcporter ENV above).
+# Copy Claude CLI and mcporter from the independent ai-tools stage.
+# This layer is only invalidated when CLAUDE_CLI_VERSION or the base image
+# changes, not when OpenClaw source code changes.
 # Authentication: the claude-code extension clears ANTHROPIC_API_KEY before
 # spawning the subprocess, so OAuth credentials from ~/.claude/.credentials.json
 # take priority. ANTHROPIC_API_KEY is only used by anthropic/* fallback models.
-ARG OPENCLAW_INSTALL_CLAUDE_CLI="1"
-RUN if [ -n "$OPENCLAW_INSTALL_CLAUDE_CLI" ]; then \
-      export HOME=/home/node && \
-      curl -fsSL https://claude.ai/install.sh | bash && \
-      chown -R node:node /home/node/.local && \
-      chown -R node:node /home/node/.cache 2>/dev/null || true && \
-      chown -R node:node /home/node/.npm 2>/dev/null || true; \
-    fi
+COPY --from=ai-tools --chown=node:node /home/node/.local /home/node/.local
+ENV PATH="/home/node/.local/bin:${PATH}"
 
 # Security hardening: Run as non-root user
 # The node:24-bookworm image includes a 'node' user (uid 1000)
